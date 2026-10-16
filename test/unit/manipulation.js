@@ -2459,7 +2459,12 @@ asyncTest( "Sanitized HTML doesn't get unsanitized", function() {
 			"<noscript><noscript/><img src=url404 onerror=xss()>",
 			"<foo\" alt=\"\" title=\"/><img src=url404 onerror=xss()>\">",
 			"<img alt=\"<x\" title=\"\" src=\"/><img src=url404 onerror=xss()>\">",
-			"<noscript/><img src=url404 onerror=xss()>"
+			"<noscript/><img src=url404 onerror=xss()>",
+
+			// Wrapping <option>/<optgroup> in a <select> lets markup escape
+			// raw text elements (CVE-2020-11023)
+			"<option><style></option></select><img src=url404 onerror=xss()></style>",
+			"<optgroup><style></optgroup></select><img src=url404 onerror=xss()></style>"
 		],
 
 		// .html() uses innerHTML directly when it can; the other paths go through buildFragment
@@ -2503,6 +2508,58 @@ asyncTest( "Sanitized HTML doesn't get unsanitized", function() {
 	jQuery.each( methods, function( method ) {
 		jQuery.each( inputs, function( i, input ) {
 			check( method, input );
+		});
+	});
+});
+
+// <option>/<optgroup> markup must be parsed in the same context the browser (and
+// any sanitizer) uses, so a "</select>" in it can't break out of a <select>
+// wrapper added by jQuery (CVE-2020-11023)
+test( "<option> & <optgroup> markup isn't parsed inside a <select> wrapper", function() {
+
+	var keepsOption,
+		probe = document.createElement( "div" ),
+		inputs = [
+			"<option>a</option></select><span>b</span>",
+			"<optgroup label='a'></optgroup></select><span>b</span>",
+			"<option><style></option></select><span>b</span></style>",
+			"<optgroup><style></optgroup></select><span>b</span></style>"
+		],
+		methods = {
+			"html": function( elem, htmlString ) {
+				elem.html( htmlString );
+			},
+			"append": function( elem, htmlString ) {
+				elem.append( htmlString );
+			},
+			"jQuery": function( elem, htmlString ) {
+				jQuery( htmlString ).appendTo( elem );
+			}
+		};
+
+	expect( inputs.length * 3 );
+
+	// Support: IE<=9
+	// These browsers drop <option> outside of a <select>, so they still need the wrapper.
+	// Detect that natively so the check doesn't depend on the code under test.
+	probe.innerHTML = "<option></option>";
+	keepsOption = !!probe.lastChild;
+
+	jQuery.each( methods, function( method, insert ) {
+		jQuery.each( inputs, function( i, input ) {
+			var reference = document.createElement( "div" ),
+				div = jQuery( "<div></div>" );
+
+			if ( !keepsOption ) {
+				ok( true, "Skipped; the <select> wrapper is required in this browser" );
+				return;
+			}
+
+			reference.innerHTML = input;
+			insert( div, input );
+
+			equal( div.html(), reference.innerHTML,
+				method + " parses <option> markup like the browser does, input: " + input );
 		});
 	});
 });
