@@ -1,0 +1,60 @@
+name: build-pack
+
+# Build and pack only. The QUnit suite runs on Travis (.travis.yml).
+on: workflow_dispatch
+
+jobs:
+  pack:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install faketime
+        run: sudo apt-get update && sudo apt-get install -y faketime
+
+      - name: Install node 0.10.48
+        run: |
+          curl -fsSL https://nodejs.org/dist/v0.10.48/node-v0.10.48-linux-x64.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/node-v0.10.48-linux-x64/bin" >> "$GITHUB_PATH"
+
+      - name: Configure npm (registry time machine, 2014-05-01)
+        run: |
+          node --version
+          npm --version
+          npm config set strict-ssl false
+          npm config set registry https://:2014-05-01T18%3A05%3A32.863Z@time-machines-npm.sealsecurity.io/
+
+      - name: npm install
+        run: npm install
+
+      - name: Build dist under faketime (reproduces @DATE and banner year)
+        run: faketime -f '@2014-05-01 17:42:30' ./node_modules/.bin/grunt
+
+      - name: Generate dist/cdn via build/release.js
+        run: |
+          npm install --prefix "$RUNNER_TEMP/rel" shelljs@0.2.6
+          NODE_PATH="$RUNNER_TEMP/rel/node_modules" node -e "var R={newVersion:'1.11.1',preRelease:false,complete:function(){},exec:function(){},define:function(o){o.generateArtifacts(function(){});}};require('./build/release.js')(R);"
+          ls -l dist dist/cdn
+
+      - name: Compare rebuilt dist with committed dist
+        run: |
+          git status --porcelain
+          git diff --stat
+
+      - name: Pack
+        run: |
+          # .npmignore does not list .github/; keep it out of the tarball
+          rm -rf .github
+          npm pack
+          mkdir -p out
+          mv jquery-*.tgz out/
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jquery-npm
+          path: out/*.tgz
+          if-no-files-found: error

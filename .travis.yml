@@ -1,3 +1,33 @@
 language: node_js
 node_js:
 - '0.10'
+dist: focal
+addons:
+  chrome: stable
+  apt:
+    packages:
+    - php-cli
+script:
+# Builds dist/jquery.js (loaded by test/jquery.js) plus lint/uglify/compare_size
+- npm test
+# Serve the repo root so test/index.html and test/data/*.php are reachable
+# Multiple workers so a never-returning fixture (test/data/core/dont_return.php) can't block the server
+- PHP_CLI_SERVER_WORKERS=8 php -S 127.0.0.1:8000 > /tmp/php-server.log 2>&1 &
+- sleep 2
+# Run the QUnit suite in headless Chrome. puppeteer-core drives the Chrome installed
+# by Travis's chrome addon (puppeteer's bundled Chrome download stalled the Travis
+# job with no output for 10 minutes). Node 18 + puppeteer-core live only inside
+# this subshell (nvm) and /tmp/qrunner, so the build's node 0.10 and the repo's
+# node_modules are untouched. The runner's exit code is the step's exit code.
+- |
+  bash -c '
+    source ~/.nvm/nvm.sh &&
+    nvm install 18 &&
+    mkdir -p /tmp/qrunner &&
+    cd /tmp/qrunner &&
+    npm init -y > /dev/null &&
+    npm install --no-audit --no-fund puppeteer-core@23.11.1 &&
+    export CHROME_BIN="$(command -v google-chrome-stable || command -v google-chrome)" &&
+    echo "CHROME_BIN=$CHROME_BIN" &&
+    NODE_PATH=/tmp/qrunner/node_modules node "$TRAVIS_BUILD_DIR/test/run-browser-tests.js" http://127.0.0.1:8000/test/index.html
+  '
